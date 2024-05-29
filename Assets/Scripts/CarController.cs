@@ -36,13 +36,17 @@ public class CarController : MonoBehaviour
         startRotation = transform.eulerAngles;
         network = GetComponent<NNet>();
 
-        network.Initialize(LAYERS, NEURONS);
 
+
+    }
+
+    public void ResetWithNetwork(NNet net)
+    {
+        network = net;
+        Reset();
     }
     public void Reset()
     {
-        network.Initialize(LAYERS, NEURONS);
-
         timeSinceStart = 0f;
         totalDistanceTravelled = 0f;
         avgSpeed = 0f;
@@ -54,8 +58,8 @@ public class CarController : MonoBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
-        print("ls");
-        Reset();
+        Death();
+
     }
     private void FixedUpdate()
     {
@@ -73,6 +77,10 @@ public class CarController : MonoBehaviour
         //a = 0;
         //t = 0;
     }
+    private void Death()
+    {
+        GameObject.FindObjectOfType<GeneticManager>().Death(overallFitness,network);
+    }
     private void CalculateFitness()
     {
         totalDistanceTravelled += Vector3.Distance(transform.position, lastPosition);
@@ -83,12 +91,13 @@ public class CarController : MonoBehaviour
 
         if(timeSinceStart > 20 && overallFitness < 40)
         {
-            Reset();
+            Death();
         }
+
         if(overallFitness >= 1000)
         {
             //SavesNetwork to a Json
-            Reset();
+            Death();
         }
     }
     private void InputSensors()
@@ -102,7 +111,7 @@ public class CarController : MonoBehaviour
         if(Physics.Raycast(r, out hit))
         {
             aSensor = hit.distance / 20;
-            print("A : " + aSensor);
+           
             Debug.DrawLine(r.origin, hit.point, Color.red);
         }
 
@@ -110,7 +119,7 @@ public class CarController : MonoBehaviour
         if (Physics.Raycast(r, out hit))
         {
             bSensor = hit.distance / 20;
-            print("B : " + bSensor);
+          
             Debug.DrawLine(r.origin, hit.point, Color.red);
         }
 
@@ -118,7 +127,7 @@ public class CarController : MonoBehaviour
         if (Physics.Raycast(r, out hit))
         {
             cSensor = hit.distance / 20;
-            print("C : " + cSensor);
+          
             Debug.DrawLine(r.origin, hit.point, Color.red);
 
         }
