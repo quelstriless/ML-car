@@ -1,16 +1,19 @@
+using MathNet.Numerics.LinearAlgebra;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
 public class GeneticManager : MonoBehaviour
 {
     [Header("References")]
-    public CarController controller;
+    public CarController carPrefab; // Reference to the car prefab
+    public Transform startPosition; // Start position for cars
+    public Camera mainCamera; // Reference to the main camera
 
     [Header("Controls")]
     public int initialPopulation = 85;
     [Range(0.0f, 1.0f)]
     public float mutationRate = 0.055f;
-    public int tournamentSize = 5;
 
     [Header("Crossover Controls")]
     public int bestAgentSelection = 8;
@@ -25,44 +28,75 @@ public class GeneticManager : MonoBehaviour
 
     [Header("Public View")]
     public int currentGeneration;
-    public int currentGenome;
+
+    private CarController[] carControllers;
+    private CarController bestCar;
 
     private void Start()
     {
         CreatePopulation();
+        AttachCameraToBestCar();
+    }
+
+    private void Update()
+    {
+        AttachCameraToBestCar();
     }
 
     private void CreatePopulation()
     {
         population = new NNet[initialPopulation];
+        carControllers = new CarController[initialPopulation];
+        for (int i = 0; i < initialPopulation; i++)
+        {
+            carControllers[i] = Instantiate(carPrefab, startPosition.position, startPosition.rotation);
+        }
         FillPopulationWithRandomValues(population, 0);
         ResetToCurrentGenome();
     }
 
     private void ResetToCurrentGenome()
     {
-        controller.ResetWithNetwork(population[currentGenome]);
+        for (int i = 0; i < carControllers.Length; i++)
+        {
+            carControllers[i].ResetWithNetwork(population[i]);
+        }
     }
 
     private void FillPopulationWithRandomValues(NNet[] newPopulation, int startingIndex)
     {
         while (startingIndex < initialPopulation)
         {
-            newPopulation[startingIndex] = new NNet();
-            newPopulation[startingIndex].Initialize(controller.LAYERS, controller.NEURONS);
+            NNet nnet = new GameObject().AddComponent<NNet>();
+            newPopulation[startingIndex] = nnet;
+            newPopulation[startingIndex].Initialize(carControllers[0].LAYERS, carControllers[0].NEURONS);
             startingIndex++;
         }
     }
 
-    public void Death(float fitness, NNet network)
+    public void Death(CarController carController, float fitness, NNet network)
     {
-        if (currentGenome < population.Length - 1)
+        for (int i = 0; i < carControllers.Length; i++)
         {
-            population[currentGenome].fitness = fitness;
-            currentGenome++;
-            ResetToCurrentGenome();
+            if (carControllers[i] == carController)
+            {
+                population[i].fitness = fitness;
+                carControllers[i].gameObject.SetActive(false); // Deactivate the car
+                break;
+            }
         }
-        else
+
+        bool allDead = true;
+        for (int i = 0; i < carControllers.Length; i++)
+        {
+            if (carControllers[i].gameObject.activeSelf)
+            {
+                allDead = false;
+                break;
+            }
+        }
+
+        if (allDead)
         {
             RePopulate();
         }
@@ -79,10 +113,11 @@ public class GeneticManager : MonoBehaviour
 
         Crossover(newPopulation);
         Mutate(newPopulation);
+
         FillPopulationWithRandomValues(newPopulation, naturallySelected);
 
         population = newPopulation;
-        currentGenome = 0;
+
         ResetToCurrentGenome();
     }
 
@@ -90,111 +125,94 @@ public class GeneticManager : MonoBehaviour
     {
         for (int i = 0; i < naturallySelected; i++)
         {
-            AdaptiveMutate(newPopulation[i], mutationRate);
+            for (int c = 0; c < newPopulation[i].weights.Count; c++)
+            {
+                if (Random.Range(0.0f, 1.0f) < mutationRate)
+                {
+                    newPopulation[i].weights[c] = MutateMatrix(newPopulation[i].weights[c]);
+                }
+            }
         }
+    }
+
+    private Matrix<float> MutateMatrix(Matrix<float> A)
+    {
+        int randomPoints = Random.Range(1, (A.RowCount * A.ColumnCount) / 7);
+
+        Matrix<float> C = A;
+
+        for (int i = 0; i < randomPoints; i++)
+        {
+            int randomColumn = Random.Range(0, C.ColumnCount);
+            int randomRow = Random.Range(0, C.RowCount);
+
+            C[randomRow, randomColumn] = Mathf.Clamp(C[randomRow, randomColumn] + Random.Range(-1f, 1f), -1f, 1f);
+        }
+
+        return C;
     }
 
     private void Crossover(NNet[] newPopulation)
     {
         for (int i = 0; i < numberToCrossover; i += 2)
         {
-            NNet parent1 = TournamentSelection(tournamentSize);
-            NNet parent2 = TournamentSelection(tournamentSize);
+            int AIndex = i;
+            int BIndex = i + 1;
 
-            NNet child1 = new NNet();
-            NNet child2 = new NNet();
-
-            child1.Initialize(controller.LAYERS, controller.NEURONS);
-            child2.Initialize(controller.LAYERS, controller.NEURONS);
-
-            child1.fitness = 0;
-            child2.fitness = 0;
-
-            UniformCrossover(parent1, parent2, child1, child2);
-
-            newPopulation[naturallySelected] = child1;
-            naturallySelected++;
-            newPopulation[naturallySelected] = child2;
-            naturallySelected++;
-        }
-    }
-
-    private NNet TournamentSelection(int tournamentSize)
-    {
-        NNet best = null;
-
-        for (int i = 0; i < tournamentSize; i++)
-        {
-            int randomIndex = Random.Range(0, population.Length);
-            NNet contender = population[randomIndex];
-            if (best == null || contender.fitness > best.fitness)
+            if (genePool.Count >= 1)
             {
-                best = contender;
-            }
-        }
-
-        return best;
-    }
-
-    private void UniformCrossover(NNet parent1, NNet parent2, NNet child1, NNet child2)
-    {
-        for (int w = 0; w < parent1.weights.Count; w++)
-        {
-            for (int row = 0; row < parent1.weights[w].RowCount; row++)
-            {
-                for (int col = 0; col < parent1.weights[w].ColumnCount; col++)
+                for (int l = 0; l < 100; l++)
                 {
-                    if (Random.Range(0f, 1f) < 0.5f)
-                    {
-                        child1.weights[w][row, col] = parent1.weights[w][row, col];
-                        child2.weights[w][row, col] = parent2.weights[w][row, col];
-                    }
-                    else
-                    {
-                        child1.weights[w][row, col] = parent2.weights[w][row, col];
-                        child2.weights[w][row, col] = parent1.weights[w][row, col];
-                    }
+                    AIndex = genePool[Random.Range(0, genePool.Count)];
+                    BIndex = genePool[Random.Range(0, genePool.Count)];
+
+                    if (AIndex != BIndex)
+                        break;
                 }
             }
-        }
 
-        for (int b = 0; b < parent1.biases.Count; b++)
-        {
-            if (Random.Range(0f, 1f) < 0.5f)
-            {
-                child1.biases[b] = parent1.biases[b];
-                child2.biases[b] = parent2.biases[b];
-            }
-            else
-            {
-                child1.biases[b] = parent2.biases[b];
-                child2.biases[b] = parent1.biases[b];
-            }
-        }
-    }
+            NNet Child1 = new GameObject().AddComponent<NNet>();
+            NNet Child2 = new GameObject().AddComponent<NNet>();
 
-    private void AdaptiveMutate(NNet network, float mutationRate)
-    {
-        for (int w = 0; w < network.weights.Count; w++)
-        {
-            for (int row = 0; row < network.weights[w].RowCount; row++)
+            Child1.Initialize(carControllers[0].LAYERS, carControllers[0].NEURONS);
+            Child2.Initialize(carControllers[0].LAYERS, carControllers[0].NEURONS);
+
+            Child1.fitness = 0;
+            Child2.fitness = 0;
+
+            for (int w = 0; w < Child1.weights.Count; w++)
             {
-                for (int col = 0; col < network.weights[w].ColumnCount; col++)
+                if (Random.Range(0.0f, 1.0f) < 0.5f)
                 {
-                    if (Random.Range(0f, 1f) < mutationRate)
-                    {
-                        network.weights[w][row, col] = Mathf.Clamp(network.weights[w][row, col] + Random.Range(-1f, 1f), -1f, 1f);
-                    }
+                    Child1.weights[w] = population[AIndex].weights[w];
+                    Child2.weights[w] = population[BIndex].weights[w];
+                }
+                else
+                {
+                    Child2.weights[w] = population[AIndex].weights[w];
+                    Child1.weights[w] = population[BIndex].weights[w];
                 }
             }
-        }
 
-        for (int b = 0; b < network.biases.Count; b++)
-        {
-            if (Random.Range(0f, 1f) < mutationRate)
+            for (int w = 0; w < Child1.biases.Count; w++)
             {
-                network.biases[b] = Mathf.Clamp(network.biases[b] + Random.Range(-1f, 1f), -1f, 1f);
+                if (Random.Range(0.0f, 1.0f) < 0.5f)
+                {
+                    Child1.biases[w] = population[AIndex].biases[w];
+                    Child2.biases[w] = population[BIndex].biases[w];
+                }
+                else
+                {
+                    Child2.biases[w] = population[AIndex].biases[w];
+                    Child1.biases[w] = population[BIndex].biases[w];
+                }
             }
+
+            newPopulation[naturallySelected] = Child1;
+            naturallySelected++;
+
+            newPopulation[naturallySelected] = Child2;
+            naturallySelected++;
         }
     }
 
@@ -204,7 +222,7 @@ public class GeneticManager : MonoBehaviour
 
         for (int i = 0; i < bestAgentSelection; i++)
         {
-            newPopulation[naturallySelected] = population[i].InitiliseCopy(controller.LAYERS, controller.NEURONS);
+            newPopulation[naturallySelected] = population[i].InitiliseCopy(carControllers[0].LAYERS, carControllers[0].NEURONS);
             newPopulation[naturallySelected].fitness = 0;
             naturallySelected++;
 
@@ -221,7 +239,7 @@ public class GeneticManager : MonoBehaviour
             int last = population.Length - 1;
             last -= i;
 
-            int f = Mathf.RoundToInt(population[i].fitness * 10);
+            int f = Mathf.RoundToInt(population[last].fitness * 10);
 
             for (int c = 0; c < f; c++)
             {
@@ -234,6 +252,42 @@ public class GeneticManager : MonoBehaviour
 
     private void SortPopulation()
     {
-        System.Array.Sort(population, (a, b) => b.fitness.CompareTo(a.fitness));
+        for (int i = 0; i < population.Length; i++)
+        {
+            for (int j = i; j < population.Length; j++)
+            {
+                if (population[i].fitness < population[j].fitness)
+                {
+                    NNet temp = population[i];
+                    population[i] = population[j];
+                    population[j] = temp;
+                }
+            }
+        }
+    }
+
+    private void AttachCameraToBestCar()
+    {
+        if (carControllers.Length == 0) return;
+
+        float bestFitness = float.MinValue;
+        CarController bestCar = null;
+
+        foreach (var car in carControllers)
+        {
+            if (car.gameObject.activeSelf && car.GetComponent<NNet>().fitness > bestFitness)
+            {
+                bestFitness = car.GetComponent<NNet>().fitness;
+                bestCar = car;
+            }
+        }
+
+        if (bestCar != null && bestCar != this.bestCar)
+        {
+            this.bestCar = bestCar;
+            mainCamera.transform.SetParent(bestCar.transform);
+            mainCamera.transform.localPosition = new Vector3(0, 2, -5); // Adjust the position as needed
+            mainCamera.transform.localRotation = Quaternion.identity;
+        }
     }
 }
