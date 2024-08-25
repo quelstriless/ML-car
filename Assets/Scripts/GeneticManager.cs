@@ -2,6 +2,8 @@ using MathNet.Numerics.LinearAlgebra;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System.IO;
+using System.Runtime.Serialization.Formatters.Binary;
 
 public class GeneticManager : MonoBehaviour
 {
@@ -19,6 +21,9 @@ public class GeneticManager : MonoBehaviour
     public int bestAgentSelection = 8;
     public int worstAgentSelection = 3;
     public int numberToCrossover;
+
+    [Header("Save/Load")]
+    public string saveFileName = "best_car.dat";
 
     private List<int> genePool = new List<int>();
 
@@ -289,5 +294,81 @@ public class GeneticManager : MonoBehaviour
             mainCamera.transform.localPosition = new Vector3(0, 2, -5); // Adjust the position as needed
             mainCamera.transform.localRotation = Quaternion.identity;
         }
+    }
+
+    public void SaveBestCar()
+    {
+        if (population.Length == 0 || population[0] == null)
+        {
+            Debug.LogWarning("No population to save.");
+            return;
+        }
+
+        NNet bestNetwork = population[0];
+        string path = Path.Combine(Application.persistentDataPath, saveFileName);
+
+        using (FileStream file = File.Create(path))
+        {
+            BinaryFormatter bf = new BinaryFormatter();
+            bf.Serialize(file, new SerializableNNet(bestNetwork));
+        }
+
+        Debug.Log($"Best car saved to {path}");
+    }
+
+    public void LoadBestCar()
+    {
+        string path = Path.Combine(Application.persistentDataPath, saveFileName);
+
+        if (File.Exists(path))
+        {
+            using (FileStream file = File.Open(path, FileMode.Open))
+            {
+                BinaryFormatter bf = new BinaryFormatter();
+                SerializableNNet data = (SerializableNNet)bf.Deserialize(file);
+
+                // Create a new NNet and apply the loaded data
+                NNet loadedNetwork = new GameObject().AddComponent<NNet>();
+                loadedNetwork.Initialize(carControllers[0].LAYERS, carControllers[0].NEURONS);
+                data.ApplyTo(loadedNetwork);
+
+                // Replace the first car in the population with the loaded network
+                Destroy(population[0].gameObject);
+                population[0] = loadedNetwork;
+                carControllers[0].ResetWithNetwork(loadedNetwork);
+
+                Debug.Log($"Best car loaded from {path}");
+            }
+        }
+        else
+        {
+            Debug.LogWarning("No saved car found.");
+        }
+    }
+}
+
+[System.Serializable]
+public class SerializableNNet
+{
+    public List<float[]> weights;
+    public List<float> biases;
+
+    public SerializableNNet(NNet nnet)
+    {
+        weights = new List<float[]>();
+        foreach (var weight in nnet.weights)
+        {
+            weights.Add(weight.ToColumnMajorArray());
+        }
+        biases = new List<float>(nnet.biases);
+    }
+
+    public void ApplyTo(NNet nnet)
+    {
+        for (int i = 0; i < weights.Count; i++)
+        {
+            nnet.weights[i] = Matrix<float>.Build.Dense(nnet.weights[i].RowCount, nnet.weights[i].ColumnCount, weights[i]);
+        }
+        nnet.biases = new List<float>(biases);
     }
 }
